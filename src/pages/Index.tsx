@@ -1,34 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import HeaderBar from "@/components/dashboard/HeaderBar";
 import CameraPanel from "@/components/dashboard/CameraPanel";
 import GaussianScene from "@/components/dashboard/GaussianScene";
 import MetricsPanel from "@/components/dashboard/MetricsPanel";
 import ControlsPanel from "@/components/dashboard/ControlsPanel";
-import { processFrame, type FrameData } from "@/lib/detection";
+import {
+  buildFrameDataFromPipeline,
+  type FrameData,
+  type PipelineFrameMessage,
+} from "@/lib/detection";
 
 const Index = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [healingEnabled, setHealingEnabled] = useState(true);
   const [detectionLevel, setDetectionLevel] = useState(75);
   const [frameData, setFrameData] = useState<FrameData | null>(null);
-  const frameCounter = useRef(0);
-  const intervalRef = useRef<number>(0);
 
-  // Run detection pipeline at ~20 FPS when system is running
-  useEffect(() => {
-    if (!isRunning) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-
-    intervalRef.current = window.setInterval(() => {
-      frameCounter.current++;
-      const data = processFrame(frameCounter.current, healingEnabled, detectionLevel);
-      setFrameData(data);
-    }, 50); // ~20 FPS
-
-    return () => clearInterval(intervalRef.current);
-  }, [isRunning, healingEnabled, detectionLevel]);
+  const handleFrameMessage = useCallback((message: PipelineFrameMessage) => {
+    setFrameData(buildFrameDataFromPipeline(message));
+  }, []);
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
@@ -37,7 +27,9 @@ const Index = () => {
         <CameraPanel
           isRunning={isRunning}
           healingEnabled={healingEnabled}
+          detectionLevel={detectionLevel}
           detectedObjects={frameData?.objects ?? []}
+          onFrameMessage={handleFrameMessage}
         />
         <div className="flex flex-col gap-2 min-h-0">
           <div className="flex-1 min-h-0">

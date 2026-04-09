@@ -10,10 +10,11 @@ interface MetricsPanelProps {
 
 const LABEL_ICONS: Record<ObjectLabel, string> = {
   car: "🚗",
+  truck: "🚛",
+  bus: "🚌",
   person: "🚶",
   bike: "🚲",
-  truck: "🚛",
-  obstacle: "⚠️",
+  motorcycle: "🏍️",
 };
 
 const MetricsPanel = ({ isRunning, healingEnabled, detectionLevel, frameData }: MetricsPanelProps) => {
