@@ -76,6 +76,18 @@ const MetricsPanel = ({ isRunning, healingEnabled, detectionLevel, frameData }: 
           </div>
         )}
 
+        {m && (
+          <div>
+            <div className="metric-label">Ego Motion</div>
+            <div className="text-xs text-muted-foreground font-mono mt-1 space-y-0.5">
+              <div>Forward: {m.egoMotion.forward.toFixed(4)}</div>
+              <div>Yaw: {m.egoMotion.yaw.toFixed(4)}</div>
+              <div>Lateral: {m.egoMotion.lateral.toFixed(4)}</div>
+              <div>Quality: {(m.egoMotion.quality * 100).toFixed(0)}%</div>
+            </div>
+          </div>
+        )}
+
         {/* Object counts */}
         <div className="border-t border-border pt-2 mt-1">
           <div className="metric-label mb-2">Detected Objects</div>

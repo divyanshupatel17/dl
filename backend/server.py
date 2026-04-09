@@ -143,7 +143,11 @@ class ConnectionState:
     tracker: StableTracker = field(default_factory=StableTracker)
     frame_index: int = 0
     fps_ema: float = 24.0
-    cached_detections: List[Dict[str, object]] = field(default_factory=list)
+    enhanced_prev: Optional[np.ndarray] = None
+    prev_gray: Optional[np.ndarray] = None
+    motion_ema: Dict[str, float] = field(
+        default_factory=lambda: {"forward": 0.0, "yaw": 0.0, "lateral": 0.0, "quality": 0.0}
+    )
 
 
 MODEL = None
@@ -211,85 +215,126 @@ def encode_image(frame: np.ndarray) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-def choose_occlusion_region(state: ConnectionState, width: int, height: int) -> Tuple[int, int, int, int]:
-    if state.last_region is None or state.frame_index % 36 == 0:
-        rw = max(70, int(width * state.rng.uniform(0.2, 0.34)))
-        rh = max(60, int(height * state.rng.uniform(0.18, 0.3)))
-        x = state.rng.randint(0, max(0, width - rw - 1))
-        y = state.rng.randint(int(height * 0.1), max(int(height * 0.15), height - rh - 1))
-        state.last_region = (x, y, rw, rh)
-    return state.last_region
+def gray_world_balance(frame: np.ndarray) -> np.ndarray:
+    # Fast white-balance correction for foggy blue/gray casts.
+    f = frame.astype(np.float32)
+    means = np.mean(f, axis=(0, 1)) + 1e-6
+    mean_all = float(np.mean(means))
+    scales = mean_all / means
+    balanced = f * scales
+    return np.clip(balanced, 0, 255).astype(np.uint8)
 
 
-def apply_occlusion(
-    frame: np.ndarray,
-    region: Tuple[int, int, int, int],
-    rng: random.Random,
-) -> np.ndarray:
-    x, y, w, h = region
-    out = frame.copy()
-    roi = out[y:y + h, x:x + w]
-    if roi.size == 0:
-        return out
-
-    if rng.random() < 0.5:
-        roi = cv2.GaussianBlur(roi, (31, 31), 0)
-    else:
-        fog = np.full_like(roi, 220)
-        noise = np.zeros_like(roi)
-        cv2.randn(noise, (0, 0, 0), (20, 20, 20))
-        fog = cv2.add(fog, noise)
-        roi = cv2.addWeighted(roi, 0.45, fog, 0.55, 0)
-
-    out[y:y + h, x:x + w] = roi
-    return out
-
-
-def annotate_occlusion(frame: np.ndarray, region: Tuple[int, int, int, int]) -> np.ndarray:
-    x, y, w, h = region
-    out = frame.copy()
-    cv2.rectangle(out, (x, y), (x + w, y + h), (0, 0, 255), 2)
-    cv2.putText(out, "OCCLUDED", (x + 4, max(18, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-    return out
-
-
-def apply_healing(occluded: np.ndarray, region: Tuple[int, int, int, int]) -> np.ndarray:
-    x, y, w, h = region
-    healed = occluded.copy()
-    roi = healed[y:y + h, x:x + w]
-    if roi.size == 0:
-        return healed
-
-    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-    l2 = clahe.apply(l)
-    enhanced = cv2.merge((l2, a, b))
-    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
-
-    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
-    sharpened = cv2.filter2D(enhanced, -1, kernel)
-
-    healed[y:y + h, x:x + w] = sharpened
-    return healed
-
-
-def clear_visibility(frame: np.ndarray) -> np.ndarray:
-    # Lightweight defog/contrast enhancement for stable real-time throughput.
+def dehaze_luma(frame: np.ndarray) -> np.ndarray:
+    # Lightweight local-contrast recovery on luminance.
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.3, tileGridSize=(8, 8))
     l = clahe.apply(l)
     merged = cv2.merge((l, a, b))
-    enhanced = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+    return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
-    gamma = 1.08
+
+def clear_visibility(frame: np.ndarray, state: ConnectionState) -> np.ndarray:
+    # Phase A pipeline: white balance -> dehaze/contrast -> mild sharpen -> temporal stabilize.
+    balanced = gray_world_balance(frame)
+    enhanced = dehaze_luma(balanced)
+
+    gamma = 1.1
     inv_gamma = 1.0 / gamma
     lut = np.array([(i / 255.0) ** inv_gamma * 255 for i in range(256)], dtype=np.uint8)
     corrected = cv2.LUT(enhanced, lut)
 
-    blur = cv2.GaussianBlur(corrected, (0, 0), 0.8)
-    return cv2.addWeighted(corrected, 1.12, blur, -0.12, 0)
+    # Mild unsharp mask to recover details without amplifying dust noise.
+    blur = cv2.GaussianBlur(corrected, (0, 0), 0.9)
+    sharpened = cv2.addWeighted(corrected, 1.1, blur, -0.1, 0)
+
+    if state.enhanced_prev is None:
+        state.enhanced_prev = sharpened
+        return sharpened
+
+    stabilized = cv2.addWeighted(sharpened, 0.68, state.enhanced_prev, 0.32, 0)
+    state.enhanced_prev = stabilized
+    return stabilized
+
+
+def estimate_ego_motion(frame_bgr: np.ndarray, state: ConnectionState) -> Dict[str, float]:
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+
+    if state.prev_gray is None:
+        state.prev_gray = gray
+        return dict(state.motion_ema)
+
+    prev_pts = cv2.goodFeaturesToTrack(
+        state.prev_gray,
+        maxCorners=250,
+        qualityLevel=0.01,
+        minDistance=8,
+        blockSize=7,
+    )
+
+    if prev_pts is None or len(prev_pts) < 12:
+        state.prev_gray = gray
+        state.motion_ema["quality"] *= 0.9
+        return dict(state.motion_ema)
+
+    next_pts, status, _ = cv2.calcOpticalFlowPyrLK(
+        state.prev_gray,
+        gray,
+        prev_pts,
+        None,
+        winSize=(19, 19),
+        maxLevel=3,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
+    )
+
+    if next_pts is None or status is None:
+        state.prev_gray = gray
+        state.motion_ema["quality"] *= 0.9
+        return dict(state.motion_ema)
+
+    good_old = prev_pts[status.ravel() == 1].reshape(-1, 2)
+    good_new = next_pts[status.ravel() == 1].reshape(-1, 2)
+    tracked = len(good_old)
+    if tracked < 10:
+        state.prev_gray = gray
+        state.motion_ema["quality"] *= 0.9
+        return dict(state.motion_ema)
+
+    flow = good_new - good_old
+    median_dx = float(np.median(flow[:, 0]))
+    median_dy = float(np.median(flow[:, 1]))
+
+    yaw = 0.0
+    quality = min(1.0, tracked / 140.0)
+
+    transform, inliers = cv2.estimateAffinePartial2D(
+        good_old,
+        good_new,
+        method=cv2.RANSAC,
+        ransacReprojThreshold=2.2,
+        maxIters=1000,
+        confidence=0.98,
+    )
+    if transform is not None:
+        a = float(transform[0, 0])
+        b = float(transform[0, 1])
+        yaw = float(np.arctan2(b, a))
+        if inliers is not None and len(inliers) > 0:
+            quality = max(quality, float(np.sum(inliers)) / float(len(inliers)))
+
+    forward_raw = median_dy / max(1.0, h)
+    lateral_raw = median_dx / max(1.0, w)
+
+    alpha = 0.22
+    state.motion_ema["forward"] = state.motion_ema["forward"] * (1.0 - alpha) + forward_raw * alpha
+    state.motion_ema["lateral"] = state.motion_ema["lateral"] * (1.0 - alpha) + lateral_raw * alpha
+    state.motion_ema["yaw"] = state.motion_ema["yaw"] * (1.0 - alpha) + yaw * alpha
+    state.motion_ema["quality"] = state.motion_ema["quality"] * (1.0 - alpha) + quality * alpha
+
+    state.prev_gray = gray
+    return dict(state.motion_ema)
 
 
 def run_detection(frame: np.ndarray, conf_threshold: float) -> List[Dict[str, object]]:
@@ -423,16 +468,15 @@ async def websocket_pipeline(websocket: WebSocket) -> None:
             conf_threshold = max(0.15, min(0.7, 0.7 - (detection_level / 100.0) * 0.55))
 
             raw_frame = frame.copy()
-            healed_frame = clear_visibility(frame) if healing_enabled else raw_frame
+            healed_frame = clear_visibility(frame, state) if healing_enabled else raw_frame
+            ego_motion = estimate_ego_motion(raw_frame, state)
 
             should_detect = (state.frame_index % 2 == 0) or len(state.tracker.tracks) == 0
             if should_detect:
                 detections = run_detection(healed_frame, conf_threshold)
                 detections = state.tracker.update(detections)
-                state.cached_detections = detections
             else:
                 detections = detections_from_tracks(state.tracker)
-                state.cached_detections = detections
 
             for det in detections:
                 det["state"] = "normal"
@@ -454,12 +498,18 @@ async def websocket_pipeline(websocket: WebSocket) -> None:
                 "healed_frame": encode_image(healed_frame),
                 "detections": detections,
                 "metrics": {
-                    "fps": round(max(1.0, state.fps_ema), 1),
+                    "fps": round(min(60.0, max(1.0, state.fps_ema)), 1),
                     "latency": round(latency_ms, 1),
                     "slamAccuracy": round(98.5 + random.random() * 1.4, 1),
                     "avgConfidence": round(avg_conf, 1),
                     "healingRatio": 100.0 if healing_enabled else 0.0,
                     "counts": counts,
+                    "egoMotion": {
+                        "forward": round(float(ego_motion["forward"]), 5),
+                        "yaw": round(float(ego_motion["yaw"]), 5),
+                        "lateral": round(float(ego_motion["lateral"]), 5),
+                        "quality": round(float(ego_motion["quality"]), 3),
+                    },
                 },
             }
             await websocket.send_json(response)

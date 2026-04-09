@@ -34,6 +34,12 @@ export interface PipelineFrameMessage {
     avgConfidence: number;
     healingRatio: number;
     counts: Partial<Record<ObjectLabel, number>>;
+    egoMotion?: {
+      forward: number;
+      yaw: number;
+      lateral: number;
+      quality: number;
+    };
   };
 }
 
@@ -50,6 +56,12 @@ export interface FrameData {
     avgConfidence: number;
     healingRatio: number;
     counts: Record<ObjectLabel, number>;
+    egoMotion: {
+      forward: number;
+      yaw: number;
+      lateral: number;
+      quality: number;
+    };
   };
 }
 
@@ -203,6 +215,12 @@ export function buildFrameDataFromPipeline(message: PipelineFrameMessage): Frame
       avgConfidence: Math.round(message.metrics.avgConfidence),
       healingRatio: Math.round(message.metrics.healingRatio),
       counts,
+      egoMotion: {
+        forward: message.metrics.egoMotion?.forward ?? 0,
+        yaw: message.metrics.egoMotion?.yaw ?? 0,
+        lateral: message.metrics.egoMotion?.lateral ?? 0,
+        quality: message.metrics.egoMotion?.quality ?? 0,
+      },
     },
   };
 }

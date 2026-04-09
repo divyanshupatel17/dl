@@ -40,12 +40,9 @@ const GaussianScene = ({ isRunning, frameData }: GaussianSceneProps) => {
           <directionalLight position={[8, 14, 10]} intensity={0.8} />
           <pointLight position={[0, 3, 18]} intensity={0.35} color="#60a5fa" />
 
-          <RoadSurface />
-          <LaneMarkers />
+          <MovingRoadWorld frameData={frameData} isRunning={isRunning} />
           <CameraRig />
           <CameraFrustum />
-          <EgoPath />
-
           {frameData && <GaussianPointCloud frameData={frameData} isRunning={isRunning} />}
           {frameData && frameData.objects.map((obj) => <ObjectHalo key={obj.id} obj={obj} />)}
 
@@ -68,6 +65,58 @@ const GaussianScene = ({ isRunning, frameData }: GaussianSceneProps) => {
     </div>
   );
 };
+
+function MovingRoadWorld({ frameData, isRunning }: { frameData: FrameData | null; isRunning: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const laneRef = useRef<THREE.Group>(null);
+
+  const speedRef = useRef(0);
+  const yawRef = useRef(0);
+  const lateralRef = useRef(0);
+  const targetSpeedRef = useRef(0);
+  const targetYawRef = useRef(0);
+  const targetLateralRef = useRef(0);
+  const laneScrollRef = useRef(0);
+
+  useEffect(() => {
+    if (!frameData) return;
+    const motion = frameData.metrics.egoMotion;
+    const q = Math.max(0.3, Math.min(1, motion.quality));
+    targetSpeedRef.current = motion.forward * 38 * q;
+    targetYawRef.current = motion.yaw * 2.8 * q;
+    targetLateralRef.current = motion.lateral * 22 * q;
+  }, [frameData]);
+
+  useFrame((_, delta) => {
+    if (!isRunning) return;
+    const g = groupRef.current;
+    if (!g) return;
+
+    speedRef.current += (targetSpeedRef.current - speedRef.current) * 0.08;
+    yawRef.current += (targetYawRef.current - yawRef.current) * 0.08;
+    lateralRef.current += (targetLateralRef.current - lateralRef.current) * 0.1;
+    laneScrollRef.current += speedRef.current * delta;
+
+    g.position.x = -lateralRef.current;
+    g.rotation.y = -yawRef.current;
+    const period = 14;
+    g.position.z = ((laneScrollRef.current % period) + period) % period;
+
+    if (laneRef.current) {
+      laneRef.current.position.z = -(((laneScrollRef.current * 1.7) % 4) + 4) % 4;
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      <RoadSurface />
+      <group ref={laneRef}>
+        <LaneMarkers />
+      </group>
+      <EgoPath />
+    </group>
+  );
+}
 
 function RoadSurface() {
   return (
