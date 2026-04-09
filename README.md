@@ -28,3 +28,37 @@ Yes, but only with reverse proxy infrastructure. One example:
 - `wss://yourdomain/ws/pipeline` -> backend service
 
 Without this proxy, GitHub Pages cannot run the Python backend itself.
+
+## Render vs Railway (best for this project)
+
+For this stack (FastAPI websocket + OpenCV + YOLO):
+
+- Best for easiest setup and zero-cost demo: **Render** (free tier available, but can sleep when idle)
+- Best for always-on smoother realtime: **Railway** (usually paid, but less cold-start pain)
+
+If you want quickest path now, use **Render** first.
+
+## Simple Backend Setup (Render)
+
+This repo already includes `render.yaml`, so setup is mostly click-through:
+
+1. Open Render dashboard -> New -> Blueprint
+2. Connect your GitHub repo
+3. Select this repo root (`base`) and deploy
+4. Render reads `render.yaml` and creates `digital-twin-backend`
+5. After deploy, open `<your-render-url>/health` and verify `{ "ok": true, ... }`
+6. Open frontend once with:
+	`https://divyanshupatel.com/dl/?ws=wss://<your-render-url>/ws/pipeline`
+
+Note: Render free web services can sleep when idle. First request may take time.
+
+## Simple Backend Setup (Railway)
+
+This repo includes `railway.toml` and `nixpacks.toml`.
+
+1. New Project -> Deploy from GitHub repo
+2. Railway auto-builds using Nixpacks
+3. Start command uses uvicorn from `railway.toml`
+4. Verify `<your-railway-url>/health`
+5. Open frontend once with:
+	`https://divyanshupatel.com/dl/?ws=wss://<your-railway-url>/ws/pipeline`
