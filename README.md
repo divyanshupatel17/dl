@@ -1,4 +1,1 @@
-# Welcome to your Lovable project
-
-TODO: Document your project here
-# dl
+Self-Healing Monocular Digital Twin System for Autonomous Vehicles
