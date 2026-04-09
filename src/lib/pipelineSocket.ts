@@ -15,10 +15,34 @@ interface PipelineSocketConfig {
 
 function getDefaultWsUrl(): string {
   if (import.meta.env.VITE_PIPELINE_WS_URL) {
-    return String(import.meta.env.VITE_PIPELINE_WS_URL);
+    return String(import.meta.env.VITE_PIPELINE_WS_URL).trim();
   }
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const wsFromQuery = params.get("ws");
+    if (wsFromQuery) {
+      window.localStorage.setItem("pipelineWsUrl", wsFromQuery);
+      return wsFromQuery;
+    }
+
+    const wsFromStorage = window.localStorage.getItem("pipelineWsUrl");
+    if (wsFromStorage) {
+      return wsFromStorage;
+    }
+  } catch {
+    // Ignore URL/localStorage parsing errors.
+  }
+
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://localhost:8000/ws/pipeline`;
+  const host = window.location.hostname;
+
+  if (host === "localhost" || host === "127.0.0.1") {
+    return `${protocol}://localhost:8000/ws/pipeline`;
+  }
+
+  // Production fallback: try same domain backend (works with reverse proxy setups).
+  return `${protocol}://${window.location.host}/ws/pipeline`;
 }
 
 export class PipelineSocket {
