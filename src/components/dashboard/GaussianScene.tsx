@@ -66,6 +66,9 @@ const GaussianScene = ({ isRunning, frameData }: GaussianSceneProps) => {
 };
 
 function MovingRoadWorld({ frameData, isRunning }: { frameData: FrameData | null; isRunning: boolean }) {
+  const CRUISE_SCROLL_SPEED = 7.5;
+  const MAX_EGO_SPEED_BOOST = 9.0;
+
   const groupRef = useRef<THREE.Group>(null);
   const laneRef = useRef<THREE.Group>(null);
 
@@ -81,7 +84,8 @@ function MovingRoadWorld({ frameData, isRunning }: { frameData: FrameData | null
     if (!frameData) return;
     const motion = frameData.metrics.egoMotion;
     const q = Math.max(0.3, Math.min(1, motion.quality));
-    targetSpeedRef.current = motion.forward * 38 * q;
+    // In camera optical-flow convention, forward vehicle motion is often negative Y-flow.
+    targetSpeedRef.current = -motion.forward * 52 * q;
     targetYawRef.current = motion.yaw * 2.8 * q;
     targetLateralRef.current = motion.lateral * 22 * q;
   }, [frameData]);
@@ -94,7 +98,9 @@ function MovingRoadWorld({ frameData, isRunning }: { frameData: FrameData | null
     speedRef.current += (targetSpeedRef.current - speedRef.current) * 0.08;
     yawRef.current += (targetYawRef.current - yawRef.current) * 0.08;
     lateralRef.current += (targetLateralRef.current - lateralRef.current) * 0.1;
-    laneScrollRef.current += speedRef.current * delta;
+    const egoBoost = Math.max(-MAX_EGO_SPEED_BOOST, Math.min(MAX_EGO_SPEED_BOOST, speedRef.current));
+    const visualScrollSpeed = CRUISE_SCROLL_SPEED + egoBoost;
+    laneScrollRef.current += visualScrollSpeed * delta;
 
     g.position.x = -lateralRef.current;
     g.rotation.y = -yawRef.current;
