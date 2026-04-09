@@ -102,7 +102,7 @@ const MetricsPanel = ({ isRunning, healingEnabled, detectionLevel, frameData }: 
           </div>
           {m && (
             <div className="mt-2 text-xs text-muted-foreground font-mono">
-              Total: {frameData.objects.length} objects · {frameData.pointCount.toLocaleString()} points
+              Total: {frameData.objects.length} objects
             </div>
           )}
         </div>

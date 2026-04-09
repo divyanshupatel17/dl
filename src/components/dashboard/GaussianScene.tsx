@@ -6,7 +6,6 @@ import type { DetectedObject, FrameData } from "@/lib/detection";
 
 interface GaussianSceneProps {
   isRunning: boolean;
-  healingEnabled: boolean;
   frameData: FrameData | null;
 }
 
@@ -24,10 +23,10 @@ const GaussianScene = ({ isRunning, frameData }: GaussianSceneProps) => {
     <div className="panel-glass h-full flex flex-col">
       <div className="panel-header">Main Feature - True 3D Gaussian Digital Twin</div>
       <div className="px-4 py-1.5 text-xs text-muted-foreground flex items-center justify-between">
-        <span>Live camera frustum, road geometry, and object point-cloud reconstruction</span>
+        <span>Live camera frustum, road geometry, and depth-anchored 3D object meshes</span>
         {frameData && isRunning && (
           <span className="text-primary font-mono text-[10px]">
-            {frameData.pointCount.toLocaleString()} pts · {frameData.objects.length} objects
+            {frameData.objects.length} tracked objects
           </span>
         )}
       </div>
@@ -43,14 +42,14 @@ const GaussianScene = ({ isRunning, frameData }: GaussianSceneProps) => {
           <MovingRoadWorld frameData={frameData} isRunning={isRunning} />
           <CameraRig />
           <CameraFrustum />
-          {frameData && <GaussianPointCloud frameData={frameData} isRunning={isRunning} />}
-          {frameData && frameData.objects.map((obj) => <ObjectHalo key={obj.id} obj={obj} />)}
+          {frameData && frameData.objects.map((obj) => <ObjectMesh key={obj.id} obj={obj} isRunning={isRunning} />)}
+          {frameData && frameData.objects.map((obj) => <ObjectHalo key={`halo-${obj.id}`} obj={obj} />)}
 
           <OrbitControls enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2.08} minDistance={9} maxDistance={44} />
         </Canvas>
 
         <div className="absolute top-2 right-3 flex gap-2 text-[10px]">
-          <span className="bg-background/70 px-1.5 py-0.5 rounded text-muted-foreground">Camera FOV + live Gaussian points</span>
+          <span className="bg-background/70 px-1.5 py-0.5 rounded text-muted-foreground">Camera FOV + depth-scaled 3D object blocks</span>
         </div>
 
         <div className="absolute bottom-3 left-3 flex gap-2 text-[10px]">
@@ -203,63 +202,33 @@ function EgoPath() {
   return <primitive object={new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: "#60a5fa" }))} />;
 }
 
-function GaussianPointCloud({ frameData, isRunning }: { frameData: FrameData; isRunning: boolean }) {
-  const pointsRef = useRef<THREE.Points>(null);
-  const previous = useRef<Float32Array | null>(null);
-  const current = useRef<Float32Array | null>(null);
-  const target = useRef<Float32Array | null>(null);
-  const tRef = useRef(1);
+function ObjectMesh({ obj, isRunning }: { obj: DetectedObject; isRunning: boolean }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const targetPos = useRef(new THREE.Vector3(obj.pos3d.x, obj.size3d.y * 0.5, obj.pos3d.z));
 
   useEffect(() => {
-    if (current.current && current.current.length === frameData.gaussianPoints.length) {
-      previous.current = new Float32Array(current.current);
-    } else {
-      previous.current = new Float32Array(frameData.gaussianPoints);
-    }
-    target.current = new Float32Array(frameData.gaussianPoints);
-    tRef.current = 0;
-  }, [frameData]);
+    targetPos.current.set(obj.pos3d.x, obj.size3d.y * 0.5, obj.pos3d.z);
+  }, [obj.pos3d.x, obj.pos3d.z, obj.size3d.y]);
 
   useFrame((_, delta) => {
-    if (!pointsRef.current || !isRunning) return;
-    if (!previous.current || !target.current) return;
-
-    tRef.current = Math.min(1, tRef.current + delta * 4.2);
-    const t = tRef.current;
-    const len = Math.min(previous.current.length, target.current.length);
-
-    if (!current.current || current.current.length !== len) {
-      current.current = new Float32Array(len);
-    }
-
-    for (let i = 0; i < len; i++) {
-      current.current[i] = previous.current[i] + (target.current[i] - previous.current[i]) * t;
-    }
-
-    const geom = pointsRef.current.geometry;
-    const posAttr = geom.getAttribute("position") as THREE.BufferAttribute;
-    if (posAttr && posAttr.array.length === len) {
-      (posAttr.array as Float32Array).set(current.current);
-      posAttr.needsUpdate = true;
-    }
+    if (!meshRef.current || !isRunning) return;
+    meshRef.current.position.lerp(targetPos.current, Math.min(1, delta * 10));
   });
 
+  const color = LABEL_COLORS[obj.label] ?? "#9ca3af";
+  const brightness = 0.65 + (obj.confidence / 100) * 0.35;
   return (
-    <points ref={pointsRef}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[frameData.gaussianPoints, 3]} />
-        <bufferAttribute attach="attributes-color" args={[frameData.gaussianColors, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.065}
-        vertexColors
-        sizeAttenuation
-        transparent
-        opacity={0.88}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
+    <group>
+      <mesh ref={meshRef} position={[obj.pos3d.x, obj.size3d.y * 0.5, obj.pos3d.z]}>
+        <boxGeometry args={[obj.size3d.x, obj.size3d.y, obj.size3d.z]} />
+        <meshStandardMaterial color={color} roughness={0.42} metalness={0.24} emissive={color} emissiveIntensity={0.08 * brightness} />
+      </mesh>
+
+      <mesh position={[obj.pos3d.x, obj.size3d.y + 0.35, obj.pos3d.z]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshBasicMaterial color={color} transparent opacity={0.88} />
+      </mesh>
+    </group>
   );
 }
 

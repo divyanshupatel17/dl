@@ -33,7 +33,7 @@ const Index = () => {
         />
         <div className="flex flex-col gap-2 min-h-0">
           <div className="flex-1 min-h-0">
-            <GaussianScene isRunning={isRunning} healingEnabled={healingEnabled} frameData={frameData} />
+            <GaussianScene isRunning={isRunning} frameData={frameData} />
           </div>
           <ControlsPanel
             isRunning={isRunning}
