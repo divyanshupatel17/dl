@@ -1,64 +1,102 @@
-Self-Healing Monocular Digital Twin System for Autonomous Vehicles
+# Self-Healing Monocular Digital Twin for Autonomous Vehicles
 
-## Frontend + Backend Deployment
+## Project Overview
+This project builds a real-time monocular digital twin pipeline for autonomous driving scenarios. It processes a single dashcam stream, simulates real-world visual degradation, restores affected regions, detects key road objects, and maps detections into an approximate 3D scene for live visualization.
 
-The frontend can be hosted on GitHub Pages. The backend (FastAPI websocket + OpenCV/YOLO) must be hosted separately because GitHub Pages is static only.
+## Frontend Preview
+![Frontend preview](./preview.png)
 
-### Why production shows WS disconnected
+## Objective
+The system is designed to:
+- Process a single dashcam video (monocular input)
+- Detect and classify objects such as car, person, bike, and truck
+- Simulate realistic degradation effects including fog, blur, and partial occlusion
+- Restore degraded image regions using a self-healing pipeline
+- Convert 2D detections into approximate 3D positions
+- Reconstruct a live scene representation using Gaussian splatting
+- Display the full pipeline output in an interactive dashboard
 
-If the site is live but websocket shows disconnected, it means frontend is reachable but backend websocket endpoint is not reachable from that browser URL.
+## End-to-End Workflow
+Video Input -> Occlusion Simulation -> Healing -> Object Detection -> 2D to 3D Mapping -> Gaussian Reconstruction -> Live Dashboard
 
-### Runtime backend URL setup (no rebuild)
+## Core Modules
 
-Open your deployed URL once with query parameter:
+### 1. Input Module
+- Accepts dashcam video input
+- Processes frames sequentially in real time
+- Uses monocular vision instead of multi-sensor fusion
 
-- `https://yourdomain/dl/?ws=wss://your-backend-domain/ws/pipeline`
+### 2. Occlusion Simulation Module
+- Introduces realistic degradations:
+	- Fog
+	- Blur
+	- Partial obstruction
+- Stress-tests robustness under challenging road conditions
 
-The app stores it in browser localStorage and uses it on future loads.
+### 3. Healing Module
+- Restores degraded regions using:
+	- CLAHE (Contrast Limited Adaptive Histogram Equalization)
+	- Sharpening filters
+- Applies restoration selectively to occluded regions rather than the full frame
 
-To clear it:
+### 4. Object Detection Module
+- Runs detection on healed frames
+- Detects key traffic participants:
+	- Car
+	- Person
+	- Bike
+	- Truck
+- Improves detection reliability in degraded scenes
 
-- `localStorage.removeItem('pipelineWsUrl')`
+### 5. 2D to 3D Mapping Module
+- Converts 2D bounding boxes into approximate 3D positions
+- Uses object scale for depth cues and screen position for spatial mapping
+- Provides practical monocular depth approximation for digital twin reconstruction
 
-### Same domain for both frontend and backend
+## Tech Stack
+- Frontend: React + Vite + TypeScript
+- Backend: FastAPI + WebSocket
+- Vision: OpenCV + YOLO
+- 3D Scene: Gaussian-splatting-based reconstruction and visualization
 
-Yes, but only with reverse proxy infrastructure. One example:
+## Run Locally
 
-- `https://yourdomain/dl/` -> GitHub Pages frontend
-- `wss://yourdomain/ws/pipeline` -> backend service
+### Prerequisites
+- Node.js 18+
+- Python 3.10+
 
-Without this proxy, GitHub Pages cannot run the Python backend itself.
+### 1. Install frontend dependencies
+```bash
+npm install
+```
 
-## Render vs Railway (best for this project)
+### 2. Create and activate Python virtual environment
+Windows PowerShell:
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+```
 
-For this stack (FastAPI websocket + OpenCV + YOLO):
+### 3. Start the project
 
-- Best for easiest setup and zero-cost demo: **Render** (free tier available, but can sleep when idle)
-- Best for always-on smoother realtime: **Railway** (usually paid, but less cold-start pain)
+Quick start (recommended on Windows):
+```powershell
+.\run-dev.ps1
+```
 
-If you want quickest path now, use **Render** first.
+Manual start (two terminals):
 
-## Simple Backend Setup (Render)
+Terminal 1 (backend):
+```powershell
+npm run dev:backend
+```
 
-This repo already includes `render.yaml`, so setup is mostly click-through:
+Terminal 2 (frontend):
+```powershell
+npm run dev
+```
 
-1. Open Render dashboard -> New -> Blueprint
-2. Connect your GitHub repo
-3. Select this repo root (`base`) and deploy
-4. Render reads `render.yaml` and creates `digital-twin-backend`
-5. After deploy, open `<your-render-url>/health` and verify `{ "ok": true, ... }`
-6. Open frontend once with:
-	`https://divyanshupatel.com/dl/?ws=wss://<your-render-url>/ws/pipeline`
-
-Note: Render free web services can sleep when idle. First request may take time.
-
-## Simple Backend Setup (Railway)
-
-This repo includes `railway.toml` and `nixpacks.toml`.
-
-1. New Project -> Deploy from GitHub repo
-2. Railway auto-builds using Nixpacks
-3. Start command uses uvicorn from `railway.toml`
-4. Verify `<your-railway-url>/health`
-5. Open frontend once with:
-	`https://divyanshupatel.com/dl/?ws=wss://<your-railway-url>/ws/pipeline`
+### 4. Open in browser
+- Frontend: `http://localhost:8080`
+- Backend health: `http://localhost:8000/health`
